@@ -1,0 +1,13 @@
+[project]
+name = "image-bridge"
+version = "0.1.0"
+description = "Lightweight image paste/upload server for CLI-to-browser image sharing"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "python-multipart>=0.0.18",
+]
+
+[project.scripts]
+image-bridge = "image_bridge.main:cli"

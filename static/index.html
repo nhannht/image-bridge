@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Image Bridge</title>
+  <style>
+    :root { --bg: #0f0f1a; --surface: #1a1a2e; --border: #2a2a4a; --accent: #7c3aed;
+            --accent-hover: #6d28d9; --text: #e2e8f0; --muted: #64748b; --success: #10b981; --error: #ef4444; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: var(--bg);
+           color: var(--text); min-height: 100vh; }
+    .container { max-width: 720px; margin: 0 auto; padding: 32px 20px; }
+    header { text-align: center; margin-bottom: 32px; }
+    header h1 { font-size: 1.5em; font-weight: 600; letter-spacing: -0.02em; }
+    header p { color: var(--muted); font-size: 0.85em; margin-top: 6px; }
+
+    .dropzone { background: var(--surface); border: 2px dashed var(--border); border-radius: 12px;
+                padding: 48px 24px; text-align: center; cursor: pointer; transition: all 0.2s ease;
+                position: relative; }
+    .dropzone:hover, .dropzone.over { border-color: var(--accent); background: rgba(124,58,237,0.05); }
+    .dropzone-label { color: var(--muted); font-size: 0.9em; }
+    .dropzone-label kbd { background: var(--border); padding: 2px 8px; border-radius: 4px;
+                          font-family: monospace; font-size: 0.85em; }
+    #preview { max-width: 100%; max-height: 360px; border-radius: 8px; margin-top: 16px; display: none; }
+
+    .toast { margin-top: 16px; padding: 12px 16px; border-radius: 8px; font-family: 'JetBrains Mono', monospace;
+             font-size: 0.8em; word-break: break-all; display: none; }
+    .toast.ok { display: block; background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); color: var(--success); }
+    .toast.err { display: block; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); color: var(--error); }
+
+    .gallery { margin-top: 32px; }
+    .gallery h2 { font-size: 1em; font-weight: 500; margin-bottom: 12px; color: var(--muted); }
+    .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+    .gallery-item { background: var(--surface); border-radius: 8px; overflow: hidden; cursor: pointer;
+                    transition: transform 0.15s; border: 1px solid var(--border); }
+    .gallery-item:hover { transform: scale(1.03); }
+    .gallery-item img { width: 100%; height: 120px; object-fit: cover; display: block; }
+    .gallery-item .meta { padding: 6px 8px; font-size: 0.7em; color: var(--muted);
+                          font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .path-copy { font-family: 'JetBrains Mono', monospace; font-size: 0.75em; background: var(--surface);
+                 border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; margin-top: 4px;
+                 cursor: pointer; color: var(--accent); display: none; word-break: break-all; }
+    .path-copy:hover { background: var(--border); }
+
+    input[type=file] { display: none; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Image Bridge</h1>
+    <p><kbd>Ctrl+V</kbd> paste &middot; drag &amp; drop &middot; click to upload</p>
+  </header>
+
+  <div class="dropzone" id="drop" tabindex="0">
+    <div class="dropzone-label" id="placeholder">Drop an image or press <kbd>Ctrl+V</kbd></div>
+    <img id="preview" alt="preview">
+  </div>
+  <input type="file" id="filein" accept="image/*">
+
+  <div class="toast" id="toast"></div>
+  <div class="path-copy" id="pathCopy" title="Click to copy path"></div>
+
+  <div class="gallery" id="gallerySection" style="display:none">
+    <h2>Recent uploads</h2>
+    <div class="gallery-grid" id="gallery"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const drop = $('drop'), preview = $('preview'), placeholder = $('placeholder');
+const toast = $('toast'), filein = $('filein'), pathCopy = $('pathCopy');
+const gallery = $('gallery'), gallerySection = $('gallerySection');
+
+function showPreview(file) {
+  preview.src = URL.createObjectURL(file);
+  preview.style.display = 'block';
+  placeholder.style.display = 'none';
+}
+
+function showToast(msg, ok) {
+  toast.textContent = msg;
+  toast.className = 'toast ' + (ok ? 'ok' : 'err');
+}
+
+function showPath(path) {
+  pathCopy.textContent = path;
+  pathCopy.style.display = 'block';
+}
+
+pathCopy.addEventListener('click', () => {
+  navigator.clipboard.writeText(pathCopy.textContent);
+  const orig = pathCopy.textContent;
+  pathCopy.textContent = 'Copied!';
+  setTimeout(() => { pathCopy.textContent = orig; }, 1200);
+});
+
+async function uploadFile(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch('/upload', { method: 'POST', body: fd });
+    const j = await r.json();
+    showToast('Saved: ' + j.filename + ' (' + (j.size/1024).toFixed(1) + ' KB)', true);
+    showPath(j.path);
+    loadGallery();
+  } catch(e) {
+    showToast('Upload failed: ' + e.message, false);
+  }
+}
+
+async function loadGallery() {
+  try {
+    const r = await fetch('/api/images');
+    const images = await r.json();
+    if (!images.length) { gallerySection.style.display = 'none'; return; }
+    gallerySection.style.display = 'block';
+    gallery.textContent = '';
+    images.slice(0, 20).forEach(img => {
+      const item = document.createElement('div');
+      item.className = 'gallery-item';
+      const imgEl = document.createElement('img');
+      imgEl.src = '/uploads/' + encodeURIComponent(img.filename);
+      imgEl.alt = img.filename;
+      imgEl.loading = 'lazy';
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = img.filename;
+      item.appendChild(imgEl);
+      item.appendChild(meta);
+      item.addEventListener('click', () => {
+        navigator.clipboard.writeText(img.path);
+        showToast('Path copied: ' + img.path, true);
+        showPath(img.path);
+      });
+      gallery.appendChild(item);
+    });
+  } catch(e) { /* ignore */ }
+}
+
+// Paste
+document.addEventListener('paste', e => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      showPreview(file);
+      uploadFile(file);
+      return;
+    }
+  }
+});
+
+// Drag & drop
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => {
+  e.preventDefault(); drop.classList.remove('over');
+  const file = e.dataTransfer.files[0];
+  if (file?.type.startsWith('image/')) { showPreview(file); uploadFile(file); }
+});
+
+// Click
+drop.addEventListener('click', () => filein.click());
+filein.addEventListener('change', () => {
+  const file = filein.files[0];
+  if (file) { showPreview(file); uploadFile(file); }
+});
+
+// Initial load
+loadGallery();
+</script>
+</body>
+</html>
